@@ -1,0 +1,21 @@
+---
+- hosts: localhost
+  gather_facts: no
+
+  vars:
+    check_org: [ 'TC5', 'ТС5' ]
+
+  tasks:
+
+    - debug:
+        var: ORGANIZATION
+
+    - fail: 
+        msg: "Организация {{ ORGANIZATION }} не является {{ check_org[0] }}"
+      when: ORGANIZATION|string not in check_org
+
+    - debug:
+        msg: "Организация является {{ check_org[0] }}"
+
+
+        

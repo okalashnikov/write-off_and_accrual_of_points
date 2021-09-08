@@ -1,0 +1,29 @@
+---
+- hosts: localhost
+  gather_facts: no
+
+  tasks:
+
+    - fail:
+        msg: 'Отсутствует обязательный параметp - номер кассы POS'
+      when: pos is not defined
+ 
+    - set_fact:
+        pos_name: "POS-{{ store }}-{{ pos }}"
+
+    - fail:
+        msg: '{{ pos_name }} Касса отсутствует в Inventory'
+      when: 'pos_name not in hostvars'
+
+
+    - name: Check POS available
+      shell: echo available 
+      register: echo_info
+      delegate_to:  "POS-{{ store }}-{{ pos }}"
+
+    - fail:
+        msg: '{{ pos_name }} Касса ({{ hostvars[pos_name].ansible_host }}) проблемы с доступом'
+      when: echo_info.stdout != 'available'
+
+    - debug:
+        msg: '{{ pos_name }} Касса ({{ hostvars[pos_name].ansible_host }}) доступна'

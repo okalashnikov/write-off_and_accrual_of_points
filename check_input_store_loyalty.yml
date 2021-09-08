@@ -1,0 +1,24 @@
+---
+- hosts: localhost
+  gather_facts: no
+
+  pre_tasks:
+
+    - set_fact:
+        wf_name: ''
+
+    - set_fact:
+        wf_name: "'{{ tower_workflow_job_name }}' "
+      when: tower_workflow_job_name is defined
+
+    - name: make sure STORE is passed
+      fail:
+        msg: "Сценарий {{ wf_name }}не получил обязательный параметр - номер магазина STORE, либо номер чека CHEQUE_NO, либо датa чека CHEQUE_DATE, либо номер карты лояльности LOYALTY_CARD"
+      when: store is not defined
+         or cheque_date is not defined
+         or cheque_no is not defined
+         or loyalty_card is not defined
+
+    - debug:
+        msg: "=== Сценарий {{ wf_name }}запущен с параметром STORE={{ store }} CHEQUE_NO={{ cheque_no }} CHEQUE_DATE={{ cheque_date }} LOYALTY_CARD={{ loyalty_card }} ==="
+

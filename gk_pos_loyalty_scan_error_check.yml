@@ -1,0 +1,116 @@
+---
+- hosts: "BO-{{ store }}"
+  gather_facts: no
+
+  vars:
+    # 114 
+#    cheque_date: '06.02.2020'
+#    cheque_no: 1272
+
+    # 111
+#    cheque_date: '03.03.2020'
+#    cheque_no: 1948
+
+#    loyalty_card: '777'
+
+
+  tasks:
+
+    - name: Input variables
+      debug:
+        var: cheque_date
+    - debug:
+        var: cheque_no
+    - debug:
+        var: loyalty_card
+
+
+    - set_fact:
+        prev_cheque_no: "{{ cheque_no|int - 1 }}"
+
+    - debug:
+        var: prev_cheque_no
+
+    - set_fact:
+        log_date: "{{ cheque_date|regex_replace('.*?(\\d+)\\.(\\d+)\\.(\\d+).*', '\\3\\2\\1') }}"
+
+    - debug:
+        var: log_date
+
+    - name: Get loyalty operation
+      set_fact:
+        pos_name: "{{ 'POS-'+store+'-'+hostvars['localhost'].pos_override[ awx_workflow_job_id|string ]|default(pos) }}"
+
+    - debug:
+        var: pos_name
+
+
+    - shell: zcat /usr/local/gkretail/pos/log/std_pos.log-{{ log_date }}*.gz |sed -n "/BONNR = {{ prev_cheque_no }}/,/BONNR = {{ cheque_no }}/p" |grep -a "keyCode=83\|keyCode=54\|keyCode=84\|ErrorCode = \|Add customer with number"
+      register: check_info
+      no_log: yes
+      ignore_errors: yes
+      delegate_to: "{{ pos_name }}"
+
+    - debug: 
+        var: check_info.stdout_lines
+
+    - fail:
+        msg: "Информация о чеке {{ cheque_no }} не найдена в логе /usr/local/gkretail/pos/log/std_pos.log-{{ log_date }}*.gz"
+      when: check_info.failed is defined and check_info.failed
+        and check_info.stdout == ''
+
+    - fail:
+        msg: "{{ pos_name }} Операции подитога или итога не найдены в чеке"
+      when: check_info.stdout_lines |length == 0
+         or check_info.stdout_lines |select('match', '.*keyCode=83.*') |list |length == 0
+         or (check_info.stdout_lines |select('match', '.*keyCode=54.*') |list |length == 0
+            and check_info.stdout_lines |select('match', '.*keyCode=84.*') |list |length == 0)
+
+    - set_fact:
+        pre_payment_index: -1
+
+    - set_fact:
+        pre_payment_index: "{{ ansible_loop.index|int }}"
+      when: item is match('.*keyCode=83.*')
+        and pre_payment_index|int == -1
+      with_items: "{{ check_info.stdout_lines }}"
+      loop_control:
+        extended: yes
+
+    - debug:
+        var: pre_payment_index
+
+    - set_fact:
+        payment_index: -1
+
+    - set_fact:
+        payment_index: "{{ ansible_loop.index|int }}"
+      when: (item is match('.*keyCode=54.*')
+            or item is match('.*keyCode=84.*'))
+        and payment_index|int == -1
+      with_items: "{{ check_info.stdout_lines }}"
+      loop_control:
+        extended: yes
+
+    - debug:
+        var: payment_index
+
+    - set_fact:
+        cut_info: "{{ cut_info|default([]) + [ item ] }}"
+      when: ansible_loop.index|int > pre_payment_index|int
+        and ansible_loop.index|int < payment_index|int
+      with_items: "{{ check_info.stdout_lines }}"
+      loop_control:
+        extended: yes
+
+    - debug:
+        var: cut_info
+
+    - fail:
+        msg: "{{ pos_name }} Проблем считывания MSR не найдено"
+      when: cut_info is not defined
+        or cut_info |select('match', '.*ErrorCode = (111|114),.*') |list |length == 0
+
+    - debug:
+        msg: "{{ pos_name }} Найдена проблема считывания MSR"
+

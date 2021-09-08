@@ -1,0 +1,62 @@
+---
+- hosts: localhost
+  gather_facts: no
+
+  tasks:
+
+    - debug:
+        var: cheque_date
+    - debug:
+        var: cheque_no
+
+    - set_fact:
+        bo_name: "BO-{{ store }}"
+
+    - fail:
+        msg: '{{ bo_name }} Хост отсутствует в Inventory'
+      when: 'bo_name not in hostvars'
+
+
+    - name: Get POS Override 
+      shell: export PGPASSWORD={{ postgres_db_pass }}; psql -h {{ hostvars[ bo_name ].ansible_host }}  -U {{ postgres_db_user }} -d {{ postgres_db_name }} -c "select WORKSTATION_ID from GK_BONKOPF where BONNR = '{{ cheque_no }}' and AKTDAT >= TO_DATE('{{ cheque_date }}', 'dd.mm.yyyy'); " |sed '1,/---/d' |head -1
+      delegate_to: localhost
+      register: item_info
+#      no_log: yes
+
+    - fail:
+        msg: "Ошибка доступа к БД {{ postgres_db_user }}/{{ hostvars[ inventory_hostname ].ansible_host }}/{{ postgres_db_name }} - {{ item_info.stderr }}"
+      when: item_info.stderr != ""
+
+    - debug:
+        var: item_info.stdout_lines
+
+    - fail:
+        msg: "Не найден номер кассы по номеру чека {{ cheque_no }} от {{cheque_date }} в {{ postgres_db_user }}/{{ hostvars[ inventory_hostname ].ansible_host }}/{{ postgres_db_name }}"
+      when: item_info.stdout is match('\(0 *rows\)')
+        or  item_info.stdout_lines[0]|int <= 0
+
+    - set_fact:
+        pos_no: "{{ item_info.stdout_lines[0]|int }}"
+
+    - debug:
+        var: pos_no
+
+
+    - set_fact:
+        pos_override: {}
+        cacheable: yes
+      when: pos_override is not defined
+
+    - debug:
+        var: pos_override
+
+    - set_fact:
+        pos_override: "{{ pos_override | combine ( { awx_workflow_job_id|string : pos_no|string } ) }}"
+        cacheable: yes
+
+    - debug:
+        var: pos_override
+
+    - debug:
+        msg: "Определен номер кассы (pos_override) {{ pos_override[awx_workflow_job_id|string] }}"
+

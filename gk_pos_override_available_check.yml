@@ -1,0 +1,35 @@
+---
+- hosts: localhost
+  gather_facts: no
+
+  tasks:
+
+    - debug:
+        var: pos_override
+
+    - debug:
+        var: awx_workflow_job_id
+
+    - fail:
+        msg: 'Отсутствует переопределенный номер кассы для данного workflow'
+      when: pos_override is not defined
+         or pos_override[awx_workflow_job_id|string] is not defined
+ 
+    - set_fact:
+        pos_name: "POS-{{ store }}-{{ pos_override[awx_workflow_job_id|string] }}"
+
+    - fail:
+        msg: '{{ pos_name }} Касса отсутствует в Inventory'
+      when: 'pos_name not in hostvars'
+
+    - name: Check POS available
+      shell: echo available 
+      register: echo_info
+      delegate_to:  "{{ pos_name }}"
+
+    - fail:
+        msg: '{{ pos_name }} Касса ({{ hostvars[pos_name].ansible_host }}) проблемы с доступом'
+      when: echo_info.stdout != 'available'
+
+    - debug:
+        msg: '{{ pos_name }} Касса ({{ hostvars[pos_name].ansible_host }}) доступна'

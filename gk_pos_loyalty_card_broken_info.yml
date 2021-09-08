@@ -1,0 +1,15 @@
+---
+- hosts: "BO-{{ store }}"
+  gather_facts: no
+
+
+  tasks:
+
+    - set_fact:
+        pos_name: "{{ 'POS-'+store+'-'+hostvars['localhost'].pos_override[ awx_workflow_job_id|string ]|default(pos) }}"
+
+    - debug:
+        var: pos_name
+
+    - debug:
+        msg: "<user_resolution> Добрый день!\nДата: {{ cheque_date }} в магазине: {{ store }}\nна кассе: {{ pos_name|regex_replace('.*-','') }} в чеке: {{ cheque_no }}\nиспользовалась карта лояльности: {{ loyalty_card }}\n\nПричиной несписания баллов стала техническая ошибка.\n*********************\nКомментарии к решению клиенту не зачитывать!!!\nКарта размагничена или повреждена. Требуется заменить карту покупателю."

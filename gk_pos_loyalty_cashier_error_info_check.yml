@@ -1,0 +1,241 @@
+---
+- hosts: "BO-{{ store }}"
+  gather_facts: no
+
+  vars:
+    
+    
+    # after_payment
+#    cheque_date: '15.01.2020'
+#    cheque_no: 1224
+
+    # no_card
+#    cheque_date: '04.02.2020'
+#    cheque_no: 1254
+
+    # buffer_0
+#    cheque_date: '06.03.2020'
+#    cheque_no: 2131
+
+
+    # 2999*
+#    cheque_date: '04.03.2020'
+#    cheque_no: 2011
+
+#    loyalty_card: '777'
+
+
+    messages: [
+        { mask: '2999770000007', name: 'Скидка пенсионера', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nВ чеке применена скидка пенсионера.\nСписание баллов запрещено.' },
+        { mask: '2999670189666', name: 'Скидка сотрудника', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nВ чеке применена скидка сотрудника.\nСписание баллов запрещено.' },
+        { mask: '2999140000002', name: 'Семейная скидка', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nВ чеке применена семейная скидка.\nСписание баллов запрещено.' },
+        { mask: '265.*', name: 'Купон', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nВ чеке была применена скидка по купону. В чеке возможно применение только одной скидки - либо скидка по купону, либо списание баллов.' },
+        { mask: '2999[0-9]{9}', name: 'Скидка', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nВ чеке применена скидочная карта.\nДополнительно искользовать скидочную карту с картой лояльности невозможно.' },
+        { mask: '294[14][0-9]{9}', name: 'Ко бренд', descr: '**********************\nБаллы начислены на ко бренд карту клиента.' },
+        { mask: '\S{40}', name: 'Хэш', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nСписание/начисление по картам Почта-банка производится через 2д сканер. Карта проводилась через клавиатуру.' },
+        { mask: 'after_payment', name: 'После оплаты', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nКарта была просканирована после нажатия клавиши оплата.' },
+        { mask: 'buffer_0', name: 'Введен баланс 0', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nВ окно баланс был введен "0".\nСписание баллов запрещено.' },
+        { mask: 'other_card', name: 'Другая карта', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nВ чеке была просканирована другая карта №' },
+        { mask: 'not_found_card', name: 'Не было сканирования', descr: 'Причиной не списания баллов стала ошибка кассира.\n**********************\nКомментарии к решению клиенту не зачитывать!!!\nКарта лояльности в чек не сканировалась.' }
+        ]
+
+  tasks:
+
+    - name: Input variables
+      debug:
+        var: cheque_date
+    - debug:
+        var: cheque_no
+    - debug:
+        var: loyalty_card
+
+
+    - set_fact:
+        prev_cheque_no: "{{ cheque_no|int - 1 }}"
+
+    - debug:
+        var: prev_cheque_no
+
+    - set_fact:
+        log_date: "{{ cheque_date|regex_replace('.*?(\\d+)\\.(\\d+)\\.(\\d+).*', '\\3\\2\\1') }}"
+
+    - debug:
+        var: log_date
+
+    - name: Get loyalty operation
+      set_fact:
+        pos_name: "{{ 'POS-'+store+'-'+hostvars['localhost'].pos_override[ awx_workflow_job_id|string ]|default(pos) }}"
+
+    - debug:
+        var: pos_name
+
+
+    - shell: zcat /usr/local/gkretail/pos/log/std_pos.log-{{ log_date }}*.gz |sed -n "/BONNR = {{ prev_cheque_no }}/,/BONNR = {{ cheque_no }}/p"
+      register: full_info
+      no_log: yes
+      ignore_errors: yes
+      delegate_to: "{{ pos_name }}"
+
+    - debug:
+        var: full_info.stdout_lines
+
+    - shell: zcat /usr/local/gkretail/pos/log/std_pos.log-{{ log_date }}*.gz |sed -n "/BONNR = {{ prev_cheque_no }}/,/BONNR = {{ cheque_no }}/p" |grep -a "keyCode=83\|Add customer with number\|keyCode=54\|keyCode=84\|Input event . buffer = '0'"
+      register: check_info
+      no_log: yes
+      ignore_errors: yes
+      delegate_to: "{{ pos_name }}"
+
+    - debug: 
+        var: check_info.stdout_lines
+
+    - fail:
+        msg: "Информация о чеке {{ cheque_no }} не найдена в логе /usr/local/gkretail/pos/log/std_pos.log-{{ log_date }}*.gz"
+      when: check_info.failed is defined and check_info.failed
+        and check_info.stdout == ''
+
+    - fail:
+        msg: "{{ pos_name }} Операции подитога или итога не найдены в чеке"
+      when: check_info.stdout_lines |length == 0
+         or check_info.stdout_lines |select('match', '.*keyCode=83.*') |list |length == 0
+         or (check_info.stdout_lines |select('match', '.*keyCode=54.*') |list |length == 0
+            and check_info.stdout_lines |select('match', '.*keyCode=84.*') |list |length == 0)
+
+
+    - block:
+        - name: Get customers card
+          set_fact:
+            pre_payment_index: -1
+        - set_fact:
+            pre_payment_index: "{{ ansible_loop.index|int }}"
+          when: item is match('.*keyCode=83.*')
+            and pre_payment_index|int == -1
+          with_items: "{{ check_info.stdout_lines }}"
+          no_log: yes
+          loop_control:
+            extended: yes
+
+        - debug:
+            var: pre_payment_index
+
+        - set_fact:
+            payment_index: -1
+        - set_fact:
+            payment_index: "{{ ansible_loop.index|int }}"
+          when: (item is match('.*keyCode=54.*')
+                or item is match('.*keyCode=84.*'))
+            and payment_index|int == -1
+          with_items: "{{ check_info.stdout_lines }}"
+          no_log: yes
+          loop_control:
+            extended: yes
+
+        - debug:
+            var: payment_index
+
+        - set_fact:
+            cards: "{{ cards|default([]) + [ item |regex_replace('.*Add customer with number (\\S*).*', '\\1') ] }}"
+          when: ansible_loop.index|int > pre_payment_index|int
+            and ansible_loop.index|int < payment_index|int
+            and item is match('.*Add customer with number .*')
+          with_items: "{{ check_info.stdout_lines }}"
+          no_log: yes
+          loop_control:
+            extended: yes
+
+        - debug:
+            var: cards
+
+        - name: Check mask card
+          set_fact:
+            found_event: "{{ item.descr }}"
+          when: cards is defined
+            and cards |select('match',item.mask|string) |list |length > 0
+          with_items: "{{ messages }}"
+          no_log: yes
+
+      when: found_event is not defined
+
+
+    - block:
+        - name: Check input buffer 0
+          set_fact:
+            payment_index: -1
+
+        - set_fact:
+            payment_index: "{{ ansible_loop.index|int }}"
+          when: (item is match('.*keyCode=54.*')
+                or item is match('.*keyCode=84.*'))
+            and payment_index|int == -1
+          with_items: "{{ check_info.stdout_lines }}"
+          loop_control:
+            extended: yes
+          no_log: yes
+ 
+        - debug:
+            var: payment_index
+
+        - set_fact:
+            found_event: "{{ (messages |selectattr('mask', 'match', 'buffer_0') |list)[0].descr }}"
+          when: item is match(".*buffer = '0'.*")
+            and ansible_loop.index|int < payment_index|int
+          with_items: "{{ check_info.stdout_lines }}"
+          loop_control:
+            extended: yes
+          no_log: yes
+      when: found_event is not defined
+
+
+    - block:
+        - name: Check payment before add customer
+          set_fact:
+            customer_index: -1
+
+        - set_fact:
+            customer_index: "{{ ansible_loop.index|int }}"
+          when: item is match('.*Add customer with number .*')
+            and customer_index|int == -1
+          with_items: "{{ check_info.stdout_lines }}"
+          loop_control:
+            extended: yes
+          no_log: yes
+ 
+        - debug:
+            var: customer_index
+
+        - set_fact:
+            found_event: "{{ (messages |selectattr('mask', 'match', 'after_payment') |list)[0].descr }}"
+          when: (item is match('.*keyCode=54.*')
+                or item is match('.*keyCode=84.*'))
+            and ansible_loop.index|int < customer_index|int
+          with_items: "{{ check_info.stdout_lines }}"
+          loop_control:
+            extended: yes
+          no_log: yes
+      when: found_event is not defined
+
+
+    - block:
+        - name: Check card found
+          set_fact:
+            found_event: "{{ (messages |selectattr('mask', 'match', 'not_found_card') |list)[0].descr }}"
+          when: cards is not defined
+      when: found_event is not defined
+
+
+    - block:
+        - name: Check other card
+          set_fact:
+            found_event: "{{ (messages |selectattr('mask', 'match', 'other_card') |list)[0].descr + ' ' + cards |select('match','77.*') |list |join(', ')  }}"
+          when: cards is defined 
+            and cards |select('match',loyalty_card|string) |list |length == 0
+      when: found_event is not defined
+
+
+    - fail: 
+        msg: "{{ pos_name }} Ошибок кассира по операциям лояльности не найдено"
+      when: found_event is not defined
+
+    - debug:
+        msg: "<user_resolution> Добрый день!\nДата: {{ cheque_date }} в магазине: {{ store }}\nна кассе: {{ pos_name|regex_replace('.*-','') }} в чеке: {{ cheque_no }}\nиспользовалась карта лояльности: {{ loyalty_card }}\n\n{{ found_event }}"
+      when: found_event is defined
+      

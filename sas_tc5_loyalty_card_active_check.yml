@@ -1,0 +1,55 @@
+---
+- hosts: localhost
+  gather_facts: no
+  run_once: yes
+
+  tasks:
+
+    - name: Get loyalty card
+      local_action: shell echo -e "set lin 32000\nset wrap off\nselect /* +parallel(lc 8) */ lc.LOYALTY_CARD_ID, lc.LOYALTY_CARD_STATUS, lc.LOYALTY_CARD_LST_RED_DT  from DDS_TC5.LOYALTY_CARD lc where LOYALTY_CARD_ID = '{{ loyalty_card }}' and  lc.VALID_TO_DTTM = DATE'9999-12-31' ; " | sqlplus -S {{ oracle_db_user }}/{{ oracle_db_pass }}@{{ oracle_db_host }}:{{ oracle_db_port }}/{{ oracle_db_name }} #|grep -v '^$' |sed '1,/---/d' |sed 's/\s\+/ /g'
+      register: item_info
+      no_log: yes
+      ignore_errors: yes
+
+    - name: check item info
+      fail:
+        msg: "Не удалось выполнить запрос к {{ oracle_db_host }}:{{ oracle_db_port }}/{{ oracle_db_name }} - {{ item_info.stderr }}"
+      when: item_info.stderr is defined
+        and item_info.stderr != ''
+
+    - fail:
+        msg: "Не удалось выполнить запрос к {{ oracle_db_host }}:{{ oracle_db_port }}/{{ oracle_db_name }} - {{ item_info.stdout }}"
+      when: item_info.stdout is match('(.*\n)*.*ERROR.*\n(.*\n)*')
+
+    - debug:
+        var: item_info.stdout_lines
+
+    - fail:
+        msg: "Данные по карте лояльности {{ loyalty_card }} не получены из {{ oracle_db_host }}:{{ oracle_db_port }}/{{ oracle_db_name }}"
+      when: item_info.stdout_lines |select('match',loyalty_card|string) |list |length == 0
+
+    - set_fact:
+        last_date: "{{ ((item_info.stdout_lines |select('match',loyalty_card|string) |list)[0] |regex_replace('\\s+', ' ')).split(' ')[2] |to_datetime('%d-%b-%y') }}"
+      ignore_errors: yes
+
+    - debug:
+        var: last_date
+
+    - fail:
+        msg: "Не удалось выделить дату из {{ item_info.stdout }}"
+      when: last_date is not defined
+
+    - local_action: shell date +%Y-%m-%d
+      register: curr_date
+
+    - set_fact:
+        days: "{{ (curr_date.stdout|to_datetime('%Y-%m-%d') - last_date|to_datetime('%Y-%m-%d %H:%M:%S')).total_seconds() / 86400 }}"
+
+    - fail:
+        msg: "Карта лояльности {{ loyalty_card }} не использовалась {{ days|int }} дней"
+#        msg: "<user_resolution> Добрый день!\nДата: {{ cheque_date }} в магазине: {{ store }}\nна кассе: {{ pos }} в чеке: {{ cheque_no }}\nиспользовалась карта лояльности: {{ loyalty_card }}\n\nПричиной несписания баллов стала техническая ошибка.\n*********************\nКомментарии к решению клиенту не зачитывать!!!\nКарта размагничена или повреждена. Требуется заменить карту покупателю."  
+      when: days|int > 3 * 30
+
+    - debug:
+        msg: "Карта лояльности использовалась"
+
